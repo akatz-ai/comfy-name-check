@@ -3,7 +3,9 @@
 
 import argparse
 import asyncio
+import os
 import re
+import subprocess
 import sys
 
 import httpx
@@ -14,6 +16,48 @@ console = Console()
 
 DEFAULT_TLDS = ["com", "io", "org", "dev", "ai"]
 TIMEOUT = 10.0
+
+# GitHub token (resolved once at startup)
+_github_token: str | None = None
+
+
+def get_github_token() -> str | None:
+    """Get GitHub token from env var or gh CLI."""
+    global _github_token
+    if _github_token is not None:
+        return _github_token if _github_token else None
+
+    # Try GITHUB_TOKEN env var first
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        _github_token = token
+        return token
+
+    # Try gh CLI
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            _github_token = result.stdout.strip()
+            return _github_token
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    _github_token = ""  # Mark as checked but not found
+    return None
+
+
+def get_github_headers() -> dict:
+    """Get headers for GitHub API requests."""
+    headers = {"Accept": "application/vnd.github+json"}
+    token = get_github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def normalize_pypi_name(name: str) -> str:
@@ -85,10 +129,10 @@ async def check_npm(client: httpx.AsyncClient, name: str) -> dict:
         return {"available": None, "detail": str(e)}
 
 
-async def check_github_user(client: httpx.AsyncClient, name: str) -> dict:
+async def check_github_user(client: httpx.AsyncClient, name: str, headers: dict) -> dict:
     """Check GitHub username availability."""
     try:
-        r = await client.get(f"https://api.github.com/users/{name}")
+        r = await client.get(f"https://api.github.com/users/{name}", headers=headers)
         if r.status_code == 404:
             return {"available": True, "detail": ""}
         if r.status_code == 200:
@@ -102,10 +146,10 @@ async def check_github_user(client: httpx.AsyncClient, name: str) -> dict:
         return {"available": None, "detail": str(e)}
 
 
-async def check_github_org(client: httpx.AsyncClient, name: str) -> dict:
+async def check_github_org(client: httpx.AsyncClient, name: str, headers: dict) -> dict:
     """Check GitHub organization availability."""
     try:
-        r = await client.get(f"https://api.github.com/orgs/{name}")
+        r = await client.get(f"https://api.github.com/orgs/{name}", headers=headers)
         if r.status_code == 404:
             return {"available": True, "detail": ""}
         if r.status_code == 200:
@@ -155,6 +199,7 @@ async def check_domain(client: httpx.AsyncClient, name: str, tld: str) -> dict:
 async def run_checks(name: str, tlds: list[str], skip: set[str]) -> list[tuple[str, dict]]:
     """Run all availability checks in parallel."""
     results = []
+    github_headers = get_github_headers()
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         tasks = []
@@ -175,9 +220,9 @@ async def run_checks(name: str, tlds: list[str], skip: set[str]) -> list[tuple[s
             labels.append("npm")
 
         if "github" not in skip:
-            tasks.append(check_github_user(client, name))
+            tasks.append(check_github_user(client, name, github_headers))
             labels.append("GitHub User")
-            tasks.append(check_github_org(client, name))
+            tasks.append(check_github_org(client, name, github_headers))
             labels.append("GitHub Org")
 
         if "domain" not in skip:

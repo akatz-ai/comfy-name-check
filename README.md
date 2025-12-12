@@ -75,10 +75,26 @@ Checking availability for: my-project
 | `--version` | Show version |
 | `--help` | Show help |
 
+## GitHub Authentication
+
+The tool automatically uses GitHub authentication for higher rate limits (5,000 req/hour vs 60 req/hour):
+
+1. **`gh` CLI** (recommended): If you have [GitHub CLI](https://cli.github.com/) installed and authenticated (`gh auth login`), the tool uses it automatically.
+
+2. **Environment variable**: Set `GITHUB_TOKEN` or `GH_TOKEN`:
+   ```bash
+   export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+   name-check my-project
+   ```
+
+If neither is available, the tool falls back to unauthenticated requests.
+
 ## Rate Limits
 
-- **GitHub**: 60 requests/hour unauthenticated. When checking multiple names, you may hit this limit.
-- **Other platforms**: Generally no strict limits for reasonable usage.
+| Platform | Unauthenticated | Authenticated |
+|----------|-----------------|---------------|
+| GitHub | 60 req/hour | 5,000 req/hour |
+| Others | No strict limits | N/A |
 
 ## License
 
